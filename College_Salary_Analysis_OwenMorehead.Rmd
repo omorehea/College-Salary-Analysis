@@ -1,0 +1,422 @@
+---
+title: "Exploring Post College Salaries"
+#subtitle: ""
+author: "Owen Morehead"
+date: \today
+documentclass: article
+fontsize: 12pt 
+geometry: margin = 1in
+output: 
+  pdf_document:
+    fig_caption: true
+    fig_width: 8 
+    fig_height: 4 
+header-includes:
+  - '\usepackage{amsmath}'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,  # don't show code
+  include = TRUE, # show output 
+  warning = FALSE, # don't show warnings 
+  message = FALSE, # don't show messages 
+  cache = FALSE, # save run result in a cache folder, but tricky 
+  fig.width = 6, 
+  fig.height = 6, 
+  fig.path = 'Figs/', 
+  fig.algin = "center"
+  )
+```
+
+```{r, load-all-library}
+#install.packages("pacman") 
+#library(pacman)
+
+#install.packages("modelsummary",dependencies=T)
+#install.packages("data.table")
+#install.packages("ggthemes")
+#install.packages("stargazer")
+#install.packages("gridExtra")
+#install.packages("AICcmodavg", dependencies =T)
+#library(AICcmodavg)
+
+library(gridExtra)
+library(stargazer)
+library(data.table)
+library(ggthemes)
+#library(modelsummary)  #doesnt seem to work for my system
+library(RColorBrewer)
+library(ggplot2)
+library(dplyr)
+library(magrittr)
+
+#p_load(ggplot2, dplyr, modelsummary, data.table)
+```
+
+## Background
+This dataset from The Wall Street Journal (2017) contains post graduation job salary information for over 200 of the most popular colleges in the United States. A top factor that influences many students target colleges is the salary they could recieve after graduating. Thus, analyzing this dataset, which contains the colleges school type, location, and median career salaries can provide insights to many of the millions of college sudents in the U.S.
+
+## Data Preparation and Cleaning
+
+After obtaining the data from [Kaggle](https://www.kaggle.com/wsj/college-salaries?select=salaries-by-region.csv) there are a handful of modifications that need to be done before we can run any analysis. The two datasets we will be working with here are salaries by college and type, and salaries by college and college region. Each of these data sets share the following features: 
+
+* starting median salary
+* mid-career median salary
+* mid-career salaries for the 10th, 25th, 50th, 75th, and 90th percentiles
+
+
+```{r}
+# read the data 
+colleges1 <- read.csv("salaries-by-college-type.csv")   #read in the data
+colleges2 <- read.csv("salaries-by-region.csv")
+
+nomatch <- subset(colleges1, !(School.Name %in% colleges2$School.Name))
+```
+
+
+One of the first things to note is the sizes of each data table. The college by type table has dimensions (`r dim(colleges1)`) while the colleges by region table has dimensions (`r dim(colleges2)`). We see that there are more colleges by type than there are by region. We also note that there is only `r length(nomatch$School.Name)` college in the type data that is not in the region data and this is for `r nomatch$School.Name`. However, we can still use this college data since we know its region. On the other hand, unfortunately, there are 52 colleges that have an identified region but not a type. If one had the time they could lookup each of these colleges online and manually fill in their region, but for the purposes of this project I will discard these data since we will still have over 200 colleges to analyze.
+
+Continuing the initial analysis, we note that for both tables, the columns which have NA values are `r colnames(colleges1[5])` and `r colnames(colleges1[8])`. Removing the mid career percentile salary data will not severely hinder any further analysis. 
+
+From here we can merge the two data frames by their school name keeping all the names in the college type data so that each college will have an applicable type and region. We also make sure that each college name is unique as it should be. In addition we need to make sure all numeric salary data are readable by removing the _$_ and _,_ symbols from all the values. This can easily be achieved with the _gsub()_ function. 
+
+Now we have our cleaned data as previewed below.
+
+
+```{r}
+#knitr::kable(colleges1[1:4,1:7], caption = "Uncleaned Data") 
+
+```
+
+
+```{r}
+# prep and clean the data 
+
+colleges1[colleges1 == "N/A"] = NA   #change format to "NA" data
+colleges2[colleges2 == "N/A"] = NA
+
+nas1 <- which(is.na(colleges1),arr.ind=T)  #figure out where the "NA" data is located
+#unique(nas1[,2])  column 5
+nas2 <- which(is.na(colleges2),arr.ind=T)
+#unique(nas2[,2])  column 8
+
+nomatch <- subset(nomatch,select=c(School.Name,Starting.Median.Salary,
+                                       Mid.Career.Median.Salary))
+
+#subset of the relevant columns
+colleges1 <- subset(colleges1,select=c(School.Name,School.Type)) 
+colleges2 <- subset(colleges2,select=c(School.Name,Region,Starting.Median.Salary,
+                                       Mid.Career.Median.Salary))
+
+#merging the data
+#left merge because all colleges with type have an associated region but not vise versa.
+merged <- merge(colleges1,colleges2,by="School.Name",all.x=T) 
+merged <- merged[!duplicated(merged$School.Name),]   #checking no duplicates
+merged <- na.omit(merged)   #Just to  be safe. Should not be any NA values (unless we did right merge). 
+
+#formatting the data to make it readable
+#eliminating the $ and , from the salary data
+merged$Starting.Median.Salary <- as.numeric(gsub("[\\$,]","",merged$Starting.Median.Salary))
+
+merged$Mid.Career.Median.Salary <- as.numeric(gsub("[\\$,]","",merged$Mid.Career.Median.Salary))
+
+#can also get rid of space between words in school type if desired.
+#merged$School.Type <- gsub(" ","",merged$School.Type)   
+
+
+
+
+```
+
+
+```{r}
+merged_namesfortable <- merged
+colnames(merged_namesfortable) <- c("School Name", "School Type", "Region", "Starting Median Salary", "Mid Career  Median Salary")
+rownames(merged_namesfortable) <- c()
+knitr::kable(head(merged_namesfortable), caption = "College Salary Data") 
+
+```
+
+## Visualization 
+
+
+```{r, fig.cap = "School Type and Region Histogram"}
+type_sum <- table(merged$School.Type)  #frequency table for school type
+region_sum <- table(merged$Region)     #frequency table for school region
+par(mgp=c(2,0.4,0), mfrow=c(2,1), mar=c(4,10,4,4))
+barplot(type_sum, las = 1, col=rgb(0.2,0.1,0.4,0.6), horiz=T,
+        xlab = "Frequency",
+        ylab = "",
+        main = "Frequency of School Types", cex.lab = 1
+        
+)
+title(ylab="School Type", line=6, cex.lab=1)
+barplot(region_sum, las = 1, col=rgb(0.2,0.1,0.4,0.6), horiz=T,
+        xlab = "Frequency",
+        ylab = "",
+        main = "Frequency of School Regions", cex.axis = 1
+)
+title(ylab="School Region in U.S", line=6, cex.lab=1)
+
+```
+
+Let us first visualize the frequency of our category types. Refer to Figure 1 below. Notice there are many more party schools in this dataset compared to the other school type categories. The distribution of general school location has a more even distribution, with the most school being drawn from the Northeastern region of the U.S. 
+
+```{r, fig.cap = "Averge Starting and Mid Career Median Salary by Region and School Type"}
+means_both <- aggregate(merged[4:5],list(Region = merged$Region,School.Type = merged$School.Type),mean)
+#means_both   #table of salary means by region and school type
+
+ggplot(means_both, aes(reorder(Region, Starting.Median.Salary), Mid.Career.Median.Salary, fill = School.Type)) +
+  ggtitle("Average Starting and Mid Career Median Salary") + 
+  ylab("Median Salary") +
+  xlab("Region") +
+  stat_summary(geom = 'col', position = 'dodge', alpha = 0.2) +
+  stat_summary(aes(Region, Starting.Median.Salary, fill = School.Type),
+               geom = 'col', position = 'dodge') +
+  scale_fill_brewer(palette = 'Pastel1') +
+  #geom_bar(position = 'dodge', alpha = 0.8, color = 'gray20', stat='identity') +
+  scale_fill_brewer(palette = 'Accent') +
+  scale_y_continuous(labels=scales::dollar_format()) +   #add dollar format to y axis number ticks
+  theme_light() +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face="bold")) 
+
+
+
+```
+
+
+\newpage
+
+A useful visualization would be to see the starting and mid-career salaries categorized by both region and school type. Refer to Figure 2 above. This also lets us easily see the change in the average median salary from starting to mid-career. (Sorry for using 'average' and 'median' next to eachother. This is beacuse our data is given as median salary values, and for this plot I am averaging these values to get the height of the bars.) We see that the better starting and mid career salaries across almost all regions are dominated by engineering schools. The only ivy league schools recorded in this data were in the northeast and they have a high starting and mid career salary as well. 
+
+Specifically, we see that for the average median starting and mid career salaries, the maximum values are  
+`r format(paste("$",max(means_both$Starting.Median.Salary)))` and `r format(paste("$",max(means_both$Mid.Career.Median.Salary)))`, both of which are for `r format(paste(means_both$School.Type[which.max(means_both$Starting.Median.Salary)]))` schools. On the other hand, the minimum values of the average median starting and mid career salaries are `r format(paste("$",round(min(means_both$Starting.Median.Salary))))` and `r format(paste("$",round(min(means_both$Mid.Career.Median.Salary))))`, and are for `r format(paste(means_both$School.Type[which.min(means_both$Starting.Median.Salary)]))` and `r format(paste(means_both$School.Type[which.min(means_both$Mid.Career.Median.Salary)]))` school types respectively.
+The maximum median salaries are almost 2 times greater than the minimum median salaries which is a significant difference. At a glance this data supports the idea that in todays day and age, the college school type plays a significant role in the salary one makes after graduation, wether that be starting or mid-career. 
+
+To more easily visualize any linear relationships between variables (without interactions), we can essentially split up the barplot above (Figure 3 below). At a glance, the relationship between school type and salary seems fairly linear. So does that between school region and salary, except slightly less so.
+\newpage
+
+```{r, fig.cap = "Mid-Career Salary by School Type and Region"}
+#base R version of the ggplot below 
+
+# means_type <- aggregate(merged[4:5],list(School.Type = merged$School.Type),mean)
+# means_region <- aggregate(merged[4:5],list(Region = merged$Region),mean)
+# means_type <- transform(means_type, School.Type = reorder(School.Type, Mid.Career.Median.Salary))
+# means_region <- transform(means_region, Region = reorder(Region, Mid.Career.Median.Salary))
+# par(mgp=c(2,0.4,0), mfrow=c(2,1), mar=c(4,10,4,4))
+# barplot(means_type$Mid.Career.Median.Salary ~ means_type$School.Type,horiz=T, las = 1,
+#         col=rgb(0.3,0.1,0.4,0.6),
+#         xlab = "Mean Mid-Career Salary ($)", xaxt='n',
+#         ylab = "" ,
+#         main = "Mid-Career Salaries Based on School Type"
+# )
+# title(ylab="School Type", line=5.8, cex.lab=1)
+# #axis(side = 1,at = seq(0,150000,by=20000),labels = paste0("$",seq(0,150000,by=20000)), las = 2, srt=180)
+# axis(side = 1,at = seq(0,150000,by=20000),labels = F, las = 2)
+# text(seq(0,160000,by=40000),par('usr')[3]-.7,labels = paste0("$",format(seq(0,160000,by=40000), scientific = F)), las = 2, srt=0, xpd=T)
+# 
+# par(mar=c(5,8,4,4))
+# barplot(means_region$Mid.Career.Median.Salary ~ means_region$Region,horiz=T, las = 1,
+#         col=rgb(0.3,0.1,0.4,0.6),
+#         xlab = "Mean Mid.Career Salary ($)",
+#         ylab = "" ,
+#         main = "Mid-Career Salaries Based on School Region in U.S"
+# 
+#   )
+# title(ylab="School Region", line=6, cex.lab=1)
+```
+
+```{r, fig.cap = "Mid-Career Salary by School Type and Region"}
+means_type <- aggregate(merged[4:5],list(School.Type = merged$School.Type),mean)
+means_region <- aggregate(merged[4:5],list(Region = merged$Region),mean)
+means_type <- transform(means_type, School.Type = reorder(School.Type, Mid.Career.Median.Salary))
+means_region <- transform(means_region, Region = reorder(Region, Mid.Career.Median.Salary))
+
+#par(mgp=c(2,0.4,0), mfrow=c(2,1), mar=c(4,10,4,4))
+p1 <- ggplot(means_type, aes(x = School.Type, y = Mid.Career.Median.Salary), fill=rgb(0.1,0.1,0.4,0.6)) + 
+  geom_col(fill=rgb(0.1,0.1,0.4,0.6), colour="black") + 
+  ggtitle("Mid-Career Salaries Based on School Type") + 
+  ylab("Average Mid Career Salary") +
+  xlab("School Type") + coord_flip() + 
+  scale_y_continuous(labels=scales::dollar_format(), expand = c(0,2000)) +   #add dollar format to y axis number ticks
+  theme_light() +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face="bold"), 
+                                                              plot.margin = margin(10, 10, 10, 20)) 
+
+p2 <- ggplot(means_region, aes(x = Region, y = Mid.Career.Median.Salary)) + 
+  geom_col(fill=rgb(0.1,0.1,0.4,0.6), , colour="black") + 
+  ggtitle("Mid-Career Salaries Based on School Region in U.S") + 
+  ylab("Average Mid Career Salary") +
+  xlab("School Region") + coord_flip() + 
+  scale_y_continuous(labels=scales::dollar_format(), expand = c(0,1500)) +   #add dollar format to y axis number ticks
+  theme_light() +
+  theme(legend.position = "bottom", plot.title = element_text(hjust = 0.5, face="bold")) 
+  
+
+grid.arrange(p1,p2,nrow=2,ncol=1)
+
+```
+
+
+```{r, fig.cap = "Mid and Starting Career Salary Comparison"}
+merged$Region <- factor(merged$Region, levels = unique(merged$Region))
+cols <- c("darkviolet","cyan4","blue3","burlywood4","darkorange1")
+
+ggplot(merged, aes(Starting.Median.Salary,Mid.Career.Median.Salary)) + 
+  geom_point(alpha=0.7, aes(color=Region, shape=School.Type)) + 
+  #geom_smooth(method=lm, color = "orange") +
+  scale_colour_manual(values = cols) +
+  ggtitle("Mid Career Median Salary Vs. Starting Career Median Salary") + 
+  ylab("Mid Career Median Salary") +
+  xlab("Starting Career Median Salary") +
+  scale_x_continuous(labels=scales::dollar_format()) +
+  scale_y_continuous(labels=scales::dollar_format()) + 
+  guides(color = guide_legend(override.aes = list(size = 2))) +
+  theme_light() +
+  theme(legend.position = c(.87,.35), legend.background = element_rect(fill="white", color="black"),          plot.title = element_text(hjust = 0.5, face="bold")) 
+
+```
+
+
+We are starting to build an idea that a linear regression might fit this data well. Figure 4 below is also a visualization which would support this. We can see a fairly strong linear relationship between starting and mid-career salaries.
+
+Between the starting and mid career salaries we find a coorelation coeficient = `r  round(with(merged, cor(Starting.Median.Salary, Mid.Career.Median.Salary)), 4)`. This shows that the strength of the positive linear relationship between these variables is high. Indeed it would be appropriate here to perform some linear model fitting in order to try and predict the mid career median salary from the starting career salary as well as the school type and region.
+
+\newpage
+
+## Linear Model Analysis 
+Let us now formally ask, is there a relationship between median mid-career salary and the other three variables in the data?
+Our null hypothesis is that there is no relation between any of the predictors and the response. After running some linear models we should be able to either reject or fail to reject the null.
+
+We can visualize the coviariates we will use in the model (Figure 5).
+
+```{r, fig.cap = "Model Covariates", fig.width=5, fig.height=5}
+pairs(~ factor(Region) + factor(School.Type) + Starting.Median.Salary + Mid.Career.Median.Salary, data = merged,
+      main = "Covariate Data Pairs")
+```
+
+Now we can fit some linear regression models. In modelling the mid-career median salary we can first start with all three possible coviariates while excluding any interacton terms (Table 2).
+
+```{r, results = 'asis',table.cap = "Regression Table"}
+mod_reduced <- lm(Mid.Career.Median.Salary ~ factor(Region) + factor(School.Type) + Starting.Median.Salary, 
+               data = merged)
+
+stargazer(mod_reduced, title="Regression Results", type="latex", report=("vcp*"))
+#summary(mod_reduced)
+```
+
+
+\newpage
+
+We see that the p-value for the starting median salary coviarate is by far the smallest (<2.2e-16). This, alongside the high F statistic value indicates we can reject the null hypothesis. There is atleast a linear relationship between starting and mid-career salaries which is unlikely to observed simply by chance. All p-values for the school type coviarate are also within a significance level of 0.05, concluding that this coviariate is statistically significant in the model. In addition, the high value of adjusted $R^2$ (0.86) shwos that more than 86% of the variance in the data is being explained by the model.
+
+We can generate a couple more models through backwards selection. Let us eliminate the region coviariate to see if this model will fit better. The California and Southern regions are not statistically significant variables so it is worth comparing a model without the region predictor. We can also consider the only coviarate to be the starting median salary since there was the strongest linear relationship between this predictor and the response. We can also ask if there are interactions between any coviarates which might enhance our model. The null hypothesis here is that the extra coefficients in the model with interaction terms are all equal to zero, i.e., interaction terms do not enhance our linear model. 
+
+
+
+```{r}
+mod_Sal_Type <- lm(Mid.Career.Median.Salary ~ Starting.Median.Salary + factor(School.Type), data = merged)
+mod_Sal <- lm(Mid.Career.Median.Salary ~ Starting.Median.Salary, data = merged)
+mod_full_joint_Sal_Type <- lm(Mid.Career.Median.Salary ~ factor(Region) + factor(School.Type)*Starting.Median.Salary, data = merged)
+mod_full_joint_Sal_Reg <- lm(Mid.Career.Median.Salary ~ factor(School.Type) + factor(Region)*Starting.Median.Salary, data = merged)
+mod_full_joint_Type_Reg <- lm(Mid.Career.Median.Salary ~ Starting.Median.Salary + factor(Region)*factor(School.Type), data = merged)
+mod_full_joint_all <- lm(Mid.Career.Median.Salary ~ Starting.Median.Salary*factor(Region)*factor(School.Type), data = merged)
+
+```
+
+
+```{r, results = 'asis',table.cap = "Regression Comparison Table"}
+stargazer(mod_reduced,mod_full_joint_Sal_Type, mod_full_joint_Sal_Reg, no.space=T, column.sep.width = "1pt",
+          font.size = "tiny" , title="Regression Comparison Results", type="latex", report=("vcp*"))
+```
+
+In Table 3 we can see the regression results for the model with no interaction terms, the model with interaction between starting median salary and school type, and the model with interaction between starting median salary and school region. Looking at the p-values, we see that the interaction between starting median salary and school region is not statistically significant. On the other hand there is statistical significance in some of the interactions between the starting median salary and the schools type. The p-values for the interaction of starting salary with Liberal Arts and State school types are below the 0.05 threshold. 
+
+Lets take a look at a AIC table for these models (Table 4). In short, the AIC is a method for evaluating how well a model fits the data it was generated from. The smaller the AIC value the better the models fit. We see that all the AIC values are within a narrow range of eachother, but the lowest value is for the model which includes all three covariates as well as the interaction between the median starting salary and the schools type.
+
+
+```{r}
+knitr::kable(AIC(mod_reduced,mod_Sal_Type,mod_Sal,mod_full_joint_Sal_Type,mod_full_joint_Sal_Reg,mod_full_joint_Type_Reg,mod_full_joint_all), caption = "AIC Results")
+
+```
+
+As additional confirmation we can use the two-way ANOVA to perform a F-test between nested models (Table 5). Again, the null hypothesis is that the extra coefficients in the model with interactions between the starting median salary and the schools type are all equal to 0, i.e., we favor the reduced model. Note, we already have an idea if which model fits better based on the AIC values above. In confirmation with the AIC results, we see that the p-value associated with the F statistic is approximately 0.03, meaning we can indeed reject the null hypothesis at a significance level of 0.05. In other words, adding the interaction between starting median salary and school type to the linear model leads to a significantly improved fit over the model with no interaction terms.
+
+```{r}
+knitr::kable(anova(mod_reduced,mod_full_joint_Sal_Type), caption = "F-Test Between Nested Models")
+```
+
+Let us analyze the regression diagnostics for the model with the best AIC, that is the one including all covariates as well as the interactions between the starting median salary and the school type. These diagnostic plots provide checks for heteroscedasticity, normality, and influential observations (Figure 6). 
+
+We do not see any distinctive patterns in the Residuals vs Fitted plot. If there was, say, any sort of non-linear relationship in this plot, that would be indicitive that this relationship was not explained by our linear model and was left out in the residuals. 
+
+The Normal Q-Q plot shows that the residuals follow a straight line as desired.
+
+The Scale-Location plot alllows us to check the assumption of heteroscedasticity (equal variance). We see that the residuals are spread out fairly equally along the ranges of predictors which is a good sign.
+
+Lastly the Residuals vs Leverage plot helps us to find influential cases if any. There is a slight left skew and a few outliers, but there are no cases with high Cook's distance scores (i.e., points that fall outside the labeled Cook's distance). This would confirm that there are no outlying cases which are possibly influential against the regression line. 
+
+The plot of Cook's distance for our model observations in Figure 7 is another way to observe this. However, if we are being more precise we should consider observations with a Cook's distance over 4/n (n being the total number of data points) to be possible influential outliers. We can see that there are a handful of observations which lie above this threshold (dotted line in plot), which is important to note.
+
+
+```{r, fig.height=4.5, fig.width=6, fig.cap = "Regression Diagnostics"}
+par(mfrow = c(2,2), mar=c(2,2,2,2))
+plot(mod_full_joint_Sal_Type)
+
+```
+
+```{r, fig.cap = "Cooks Distance"}
+
+cooksD <- cooks.distance(mod_full_joint_Sal_Type)
+n <- nrow(merged)
+plot(cooksD, main = "Cook's Distance for Influential Obs", xlab = "Obs Number", ylab = "Cook's Distance")
+
+abline(h = 4/n, lty = 2, col = "steelblue")  #add cutoff line based on 4/n threshold
+
+#plot(mod_full_joint_Sal_Type, which=4)
+#ols_plot_cooksd_chart(mod_full_joint_Sal_Type)
+```
+
+
+```{r, fig.cap = "Data and Linear Regression w and w/out Outliers", fig.height=4.1}
+
+cooksd <- cooks.distance(mod_Sal)  #calculate cooks distance for desired model
+influential <- as.numeric(names(cooksd)[(cooksd > (4/n))])   #criteria for points that are above 4/n threshold
+
+merged_screened <- merged[-influential,]   #apply criteria to data
+
+#plot the data with linear model  before and after observations removed
+
+plot1 <- ggplot(data = merged, aes(x = Starting.Median.Salary, y = Mid.Career.Median.Salary)) + 
+  geom_point() + 
+  geom_smooth(method = lm) + 
+  ggtitle("Before Removing Outliers") + 
+  ylab("Mid Career Median Salary") +
+  xlab("Starting Career Median Salary") +
+  scale_x_continuous(labels=scales::dollar_format()) +
+  scale_y_continuous(labels=scales::dollar_format()) + 
+  theme_light() +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) 
+
+plot2 <- ggplot(data = merged_screened, aes(x = Starting.Median.Salary, y = Mid.Career.Median.Salary)) + 
+  geom_point() + 
+  geom_smooth(method = lm) + 
+  ggtitle("After Removing Outliers") + 
+  #ylab("Mid Career Median Salary") +
+  xlab("Starting Career Median Salary") +
+  scale_x_continuous(labels=scales::dollar_format()) +
+  scale_y_continuous(labels=scales::dollar_format()) + 
+  theme_light() +
+  theme(plot.title = element_text(hjust = 0.5, face="bold")) 
+
+gridExtra::grid.arrange(plot1,plot2,ncol=2)
+```
+
+Let us briefly visualize the difference that removing these outliers has on the linear model. For visualization purposes we can compare the starting and mid-career median salary data with the addition of the most simple linear regression line for y ~ x (i.e mid-career median salary ~ starting median salary). Note that according to the AIC test above this is not model which fits the data best, but it is not too much worse. What we see in Figure 8 is that the linear model changes very minimally after we remove the `r nrow(merged) - nrow(merged_screened)` observations which fall above the Cook's distance cut-off value, `r format(4/n, digits=2)`. Although there are some observations which, according to Cook's distance, might be influential outliers, what we see here is that these data seem to minimally affect the well-fitting linear model.
+
+\newpage
+
+## Conclusion
+
+Choosing which college to attend is an important decision for the millions of incoming students every year. One of the many deciding factors is the future salary one might recieve after graduating and finding a job. We found through this analysis that there seems to be a strong linear relationship between the mid-career median salary one will end up recieving, and ones starting median salary as well as the college type and region. Overall, Engineering and Ivy-League schools return the highest mid-career salaries while on the other hand, State and Party schools return the lowest mid-career salaries. In addition, schools in California and the Northeast U.S return the best mid-career salaries when averaging over all the school types. It is also to note that for all the Liberal Arts students out there, colleges in the Southern U.S return the highest starting and mid-career salaries. All in all, if a college student wants the best chance at recieving a high salary later in their career, three important factors to consider are the colleges region, type, and starting salaries after graduation.
